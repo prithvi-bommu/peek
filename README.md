@@ -24,7 +24,9 @@ No app to open. No window to manage. No copy-pasting into a chat interface.
 ## Requirements
 
 - macOS 14 (Sonoma) or later
-- An [Anthropic](https://console.anthropic.com/) or [OpenAI](https://platform.openai.com/) API key (stored in the macOS Keychain, never on disk)
+- One of:
+  - An [Anthropic](https://console.anthropic.com/) or [OpenAI](https://platform.openai.com/) API key (stored in the macOS Keychain, never on disk)
+  - Any local command-line AI tool that reads a prompt on stdin and writes to stdout (text files only)
 
 ## Install (development)
 
