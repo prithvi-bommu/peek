@@ -1,8 +1,8 @@
 import Foundation
 
-/// OpenAI Chat Completions adapter with SSE streaming.
-/// Supports an optional baseURL override (PRD §4 amendment) so any
-/// OpenAI-compatible endpoint (Ollama, gateways) works with zero UI cost.
+/// OpenAI Chat Completions adapter with SSE streaming and multi-turn support.
+/// Supports an optional baseURL override so any OpenAI-compatible endpoint
+/// (Ollama, gateways) works with zero UI cost.
 struct OpenAIProvider: AIProvider {
     let id = ProviderID.openai
     let apiKey: String
@@ -12,7 +12,7 @@ struct OpenAIProvider: AIProvider {
 
     var modelBadge: String { baseURL.host == "api.openai.com" ? "OpenAI" : "Custom" }
 
-    func stream(content: PromptContent, action: PeekAction) -> AsyncThrowingStream<String, Error> {
+    func stream(system: String, turns: [ChatTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -21,26 +21,26 @@ struct OpenAIProvider: AIProvider {
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                    var parts: [[String: Any]] = []
-                    var userText = "File: \(content.fileName)"
-                    if let text = content.text, !text.isEmpty {
-                        userText += "\n\n\(text)"
-                    }
-                    parts.append(["type": "text", "text": userText])
-                    for image in content.images {
-                        parts.append([
-                            "type": "image_url",
-                            "image_url": ["url": "data:\(image.mimeType);base64,\(image.base64)"],
-                        ])
+                    var messages: [[String: Any]] = [["role": "system", "content": system]]
+                    for turn in turns {
+                        if turn.images.isEmpty {
+                            messages.append(["role": turn.role.rawValue, "content": turn.text])
+                        } else {
+                            var parts: [[String: Any]] = [["type": "text", "text": turn.text]]
+                            for image in turn.images {
+                                parts.append([
+                                    "type": "image_url",
+                                    "image_url": ["url": "data:\(image.mimeType);base64,\(image.base64)"],
+                                ])
+                            }
+                            messages.append(["role": turn.role.rawValue, "content": parts])
+                        }
                     }
 
                     let body: [String: Any] = [
                         "model": model,
                         "stream": true,
-                        "messages": [
-                            ["role": "system", "content": action.systemPrompt],
-                            ["role": "user", "content": parts],
-                        ],
+                        "messages": messages,
                     ]
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

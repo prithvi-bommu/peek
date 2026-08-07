@@ -1,20 +1,33 @@
 import AppKit
 import SwiftUI
 
-/// Observable state for one Peek request, driven by PeekCoordinator.
+/// One message in the panel's transcript.
+struct DisplayMessage: Identifiable, Equatable {
+    let id = UUID()
+    var role: ChatTurn.Role
+    var text: String
+}
+
+/// Observable state for one Peek conversation, driven by PeekCoordinator.
 @MainActor
 final class ResultViewModel: ObservableObject {
     @Published var fileName = ""
     @Published var badge = ""
-    @Published var text = ""
+    @Published var messages: [DisplayMessage] = []
     @Published var isStreaming = false
     @Published var errorMessage: String?
     var onRetry: (() -> Void)?
     var onClose: (() -> Void)?
+    var onFollowUp: ((String) -> Void)?
+
+    /// The most recent assistant text (for the Copy button).
+    var lastAssistantText: String {
+        messages.last(where: { $0.role == .assistant })?.text ?? ""
+    }
 }
 
 /// The floating result panel (PRD §6.4): non-activating, frosted glass,
-/// appears near the cursor, dismissed by Esc / click-outside / close control.
+/// appears near the cursor, dismissed by Esc / close control.
 @MainActor
 final class ResultPanel: NSPanel {
     private let model: ResultViewModel
@@ -22,7 +35,7 @@ final class ResultPanel: NSPanel {
     init(model: ResultViewModel) {
         self.model = model
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 380),
             styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -75,9 +88,11 @@ final class ResultPanel: NSPanel {
     }
 }
 
-/// SwiftUI content for the panel.
+/// SwiftUI content for the panel: header, transcript, follow-up input.
 struct ResultView: View {
     @ObservedObject var model: ResultViewModel
+    @State private var followUpText = ""
+    @FocusState private var inputFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -86,11 +101,12 @@ struct ResultView: View {
             if let error = model.errorMessage {
                 errorState(error)
             } else {
-                responseBody
+                transcript
+                followUpBar
             }
         }
         .padding(14)
-        .frame(width: 420, height: 320, alignment: .topLeading)
+        .frame(width: 440, height: 380, alignment: .topLeading)
         .background(
             VisualEffectBackground()
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -117,8 +133,8 @@ struct ResultView: View {
                 Image(systemName: "doc.on.doc").font(.system(size: 11))
             }
             .buttonStyle(.plain)
-            .help("Copy response")
-            .disabled(model.text.isEmpty)
+            .help("Copy last response")
+            .disabled(model.lastAssistantText.isEmpty)
             Button { model.onClose?() } label: {
                 Image(systemName: "xmark").font(.system(size: 11))
             }
@@ -128,19 +144,70 @@ struct ResultView: View {
         .foregroundStyle(.secondary)
     }
 
-    private var responseBody: some View {
-        ScrollView {
-            HStack(alignment: .bottom, spacing: 4) {
-                Text(model.text.isEmpty && model.isStreaming ? "Thinking…" : model.text)
-                    .font(.system(.body, design: .rounded))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if model.isStreaming && !model.text.isEmpty {
-                    Circle().fill(.secondary).frame(width: 6, height: 6)
-                        .padding(.bottom, 4)
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.messages) { message in
+                        messageView(message)
+                    }
+                    if model.isStreaming && model.messages.last?.text.isEmpty != false {
+                        Text("Thinking…")
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: model.messages) { _, _ in
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
+    }
+
+    @ViewBuilder
+    private func messageView(_ message: DisplayMessage) -> some View {
+        if message.role == .user {
+            Text(message.text)
+                .font(.system(.callout, design: .rounded))
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 10).fill(.secondary.opacity(0.15)))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        } else {
+            Text(message.text)
+                .font(.system(.body, design: .rounded))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var followUpBar: some View {
+        HStack(spacing: 6) {
+            TextField("Ask a follow-up…", text: $followUpText)
+                .textFieldStyle(.plain)
+                .font(.system(.callout, design: .rounded))
+                .focused($inputFocused)
+                .onSubmit(sendFollowUp)
+                .disabled(model.isStreaming)
+            Button(action: sendFollowUp) {
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 16))
+            }
+            .buttonStyle(.plain)
+            .disabled(followUpText.trimmingCharacters(in: .whitespaces).isEmpty || model.isStreaming)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.secondary.opacity(0.12))
+        )
+    }
+
+    private func sendFollowUp() {
+        let question = followUpText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !model.isStreaming else { return }
+        followUpText = ""
+        model.onFollowUp?(question)
     }
 
     private func errorState(_ message: String) -> some View {
@@ -160,7 +227,7 @@ struct ResultView: View {
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(model.text, forType: .string)
+        NSPasteboard.general.setString(model.lastAssistantText, forType: .string)
     }
 }
 

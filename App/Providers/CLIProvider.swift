@@ -1,7 +1,8 @@
 import Foundation
 
-/// Runs a local command-line tool as the AI backend. The prompt is written to
-/// the tool's stdin; stdout is streamed into the panel as it arrives.
+/// Runs a local command-line tool as the AI backend. The conversation is
+/// flattened into a single prompt written to the tool's stdin; stdout is
+/// streamed into the panel as it arrives.
 ///
 /// Works with any executable that reads stdin and writes a response to stdout
 /// (e.g. `llm`, an `ollama run` wrapper, or a custom script). The command is
@@ -9,7 +10,8 @@ import Foundation
 /// launch with a minimal PATH, so bare command names won't resolve.
 ///
 /// Text-only: image files (and scanned-PDF page rasters) can't be sent to a
-/// stdin/stdout tool, so those produce a clear error instead.
+/// stdin/stdout tool, so those produce a clear error instead. Each turn spawns
+/// a fresh process (stateless), so follow-ups re-send the whole transcript.
 struct CLIProvider: AIProvider {
     let id = ProviderID.cli
     /// Full command line, e.g. "/usr/local/bin/llm -m gpt-4o-mini".
@@ -41,11 +43,11 @@ struct CLIProvider: AIProvider {
         }
     }
 
-    func stream(content: PromptContent, action: PeekAction) -> AsyncThrowingStream<String, Error> {
+    func stream(system: String, turns: [ChatTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    guard content.images.isEmpty else {
+                    guard turns.allSatisfy({ $0.images.isEmpty }) else {
                         throw CLIError.imagesUnsupported
                     }
                     let parts = command.split(separator: " ").map(String.init)
@@ -66,13 +68,16 @@ struct CLIProvider: AIProvider {
 
                     try process.run()
 
-                    let prompt = """
-                    \(action.systemPrompt)
+                    // Flatten the conversation into one prompt (stateless tool).
+                    var prompt = system + "\n"
+                    for turn in turns {
+                        switch turn.role {
+                        case .user: prompt += "\nUser:\n\(turn.text)\n"
+                        case .assistant: prompt += "\nAssistant:\n\(turn.text)\n"
+                        }
+                    }
+                    prompt += "\nAssistant:\n"
 
-                    File: \(content.fileName)
-
-                    \(content.text ?? "")
-                    """
                     stdin.fileHandleForWriting.write(Data(prompt.utf8))
                     stdin.fileHandleForWriting.closeFile()
 
@@ -82,7 +87,6 @@ struct CLIProvider: AIProvider {
                     var sawOutput = false
                     for try await byte in stdout.fileHandleForReading.bytes {
                         if Task.isCancelled { process.terminate(); return }
-                        // Accumulate bytes into valid UTF-8 pieces via a small buffer.
                         buffer.append(byte)
                         if let s = String(data: buffer, encoding: .utf8) {
                             sawOutput = sawOutput || !s.isEmpty

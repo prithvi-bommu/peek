@@ -12,22 +12,21 @@ enum PeekAction: String, CaseIterable, Codable {
         }
     }
 
-    /// Task-appropriate system prompt (PRD §6.3).
+    /// Task-appropriate system prompt (PRD §6.3). Follow-up questions reuse
+    /// the same system prompt so the model stays in "Peek" persona.
     var systemPrompt: String {
         switch self {
         case .summary:
-            "You are Peek, a macOS utility. Summarize the provided file content concisely. Lead with the single most important point. Use short paragraphs or bullets. No preamble."
+            "You are Peek, a macOS utility. Summarize the provided file content concisely. Lead with the single most important point. Use short paragraphs or bullets. No preamble. Answer any follow-up questions about the file directly and briefly."
         case .explanation:
-            "You are Peek, a macOS utility. Explain what the provided file content is and means, as if to a smart colleague unfamiliar with it. No preamble."
+            "You are Peek, a macOS utility. Explain what the provided file content is and means, as if to a smart colleague unfamiliar with it. No preamble. Answer any follow-up questions about the file directly and briefly."
         case .insights:
-            "You are Peek, a macOS utility. Extract the key insights from the provided file content as a short bulleted list, most important first. No preamble."
+            "You are Peek, a macOS utility. Extract the key insights from the provided file content as a short bulleted list, most important first. No preamble. Answer any follow-up questions about the file directly and briefly."
         }
     }
 }
 
 /// Content extracted from a file, ready to send to a provider.
-/// Text and images are both optional so the PDF hybrid path (PRD §9)
-/// can send either or both.
 struct PromptContent {
     var fileName: String
     var text: String?
@@ -35,6 +34,15 @@ struct PromptContent {
     var images: [(mimeType: String, base64: String)] = []
 
     var isEmpty: Bool { (text?.isEmpty ?? true) && images.isEmpty }
+}
+
+/// One turn of a conversation. The first user turn carries the file content
+/// (text + images); follow-up turns are plain text.
+struct ChatTurn {
+    enum Role: String { case user, assistant }
+    var role: Role
+    var text: String
+    var images: [(mimeType: String, base64: String)] = []
 }
 
 enum ProviderID: String, CaseIterable, Codable {
@@ -69,11 +77,12 @@ enum ProviderError: LocalizedError {
     }
 }
 
-/// A streaming AI provider. Implementations: AnthropicProvider, OpenAIProvider.
+/// A streaming, multi-turn AI provider.
+/// Implementations: AnthropicProvider, OpenAIProvider, CLIProvider.
 protocol AIProvider {
     var id: ProviderID { get }
-    /// Human-readable model name for the panel's provider badge.
+    /// Human-readable name for the panel's provider badge.
     var modelBadge: String { get }
-    /// Stream the response for the given content + action, yielding text deltas.
-    func stream(content: PromptContent, action: PeekAction) -> AsyncThrowingStream<String, Error>
+    /// Stream the assistant's next response given the conversation so far.
+    func stream(system: String, turns: [ChatTurn]) -> AsyncThrowingStream<String, Error>
 }
