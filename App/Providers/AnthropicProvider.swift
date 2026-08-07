@@ -1,7 +1,6 @@
 import Foundation
 
-/// Anthropic Messages API adapter with SSE streaming.
-/// Wire format: POST /v1/messages, x-api-key header, content blocks.
+/// Anthropic Messages API adapter with SSE streaming and multi-turn support.
 struct AnthropicProvider: AIProvider {
     let id = ProviderID.anthropic
     let apiKey: String
@@ -9,7 +8,7 @@ struct AnthropicProvider: AIProvider {
 
     var modelBadge: String { "Claude" }
 
-    func stream(content: PromptContent, action: PeekAction) -> AsyncThrowingStream<String, Error> {
+    func stream(system: String, turns: [ChatTurn]) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -19,25 +18,24 @@ struct AnthropicProvider: AIProvider {
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                    var blocks: [[String: Any]] = []
-                    for image in content.images {
-                        blocks.append([
-                            "type": "image",
-                            "source": ["type": "base64", "media_type": image.mimeType, "data": image.base64],
-                        ])
+                    let messages: [[String: Any]] = turns.map { turn in
+                        var blocks: [[String: Any]] = []
+                        for image in turn.images {
+                            blocks.append([
+                                "type": "image",
+                                "source": ["type": "base64", "media_type": image.mimeType, "data": image.base64],
+                            ])
+                        }
+                        blocks.append(["type": "text", "text": turn.text])
+                        return ["role": turn.role.rawValue, "content": blocks]
                     }
-                    var userText = "File: \(content.fileName)"
-                    if let text = content.text, !text.isEmpty {
-                        userText += "\n\n\(text)"
-                    }
-                    blocks.append(["type": "text", "text": userText])
 
                     let body: [String: Any] = [
                         "model": model,
                         "max_tokens": 1024,
                         "stream": true,
-                        "system": action.systemPrompt,
-                        "messages": [["role": "user", "content": blocks]],
+                        "system": system,
+                        "messages": messages,
                     ]
                     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
