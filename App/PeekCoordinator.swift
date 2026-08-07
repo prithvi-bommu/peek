@@ -1,14 +1,19 @@
 import AppKit
 import UserNotifications
 
-/// Orchestrates one Peek request: parse URL → load file → stream from
-/// provider → drive the panel (popup mode) or clipboard+notification
-/// (silent mode). Owned by the app; one panel reused across requests.
+/// Orchestrates a Peek conversation: parse URL → load file → stream first
+/// response → handle follow-up questions, maintaining turn history.
+/// Popup mode drives the panel; silent mode goes clipboard+notification
+/// (follow-ups are popup-only). Owned by the app; one panel reused.
 @MainActor
 final class PeekCoordinator {
     private let model = ResultViewModel()
     private lazy var panel = ResultPanel(model: model)
     private var streamTask: Task<Void, Never>?
+
+    /// Conversation state for the current file.
+    private var history: [ChatTurn] = []
+    private var systemPrompt = ""
     private var lastRequest: (url: URL, action: PeekAction)?
 
     init() {
@@ -16,6 +21,9 @@ final class PeekCoordinator {
         model.onRetry = { [weak self] in
             guard let last = self?.lastRequest else { return }
             self?.run(fileURL: last.url, action: last.action)
+        }
+        model.onFollowUp = { [weak self] question in
+            self?.followUp(question: question)
         }
     }
 
@@ -38,45 +46,87 @@ final class PeekCoordinator {
         run(fileURL: fileURL, action: action)
     }
 
+    /// Start a fresh conversation for a file.
     func run(fileURL: URL, action: PeekAction) {
         streamTask?.cancel()
         lastRequest = (fileURL, action)
-        let silent = Preferences.shared.silentMode
+        history = []
+        systemPrompt = action.systemPrompt
 
         model.fileName = fileURL.lastPathComponent
-        model.text = ""
+        model.messages = []
+        model.errorMessage = nil
+
+        if !Preferences.shared.silentMode { panel.showNearCursor() }
+
+        do {
+            let content = try FileContentLoader.load(url: fileURL)
+            var firstTurn = ChatTurn(role: .user, text: "File: \(content.fileName)")
+            if let text = content.text, !text.isEmpty {
+                firstTurn.text += "\n\n\(text)"
+            }
+            firstTurn.images = content.images
+            history.append(firstTurn)
+        } catch {
+            present(error: error)
+            return
+        }
+        streamNextAssistantTurn()
+    }
+
+    /// Append a follow-up question to the conversation (popup mode only).
+    func followUp(question: String) {
+        guard !model.isStreaming else { return }
+        history.append(ChatTurn(role: .user, text: question))
+        model.messages.append(DisplayMessage(role: .user, text: question))
+        streamNextAssistantTurn()
+    }
+
+    /// Stream the assistant's next turn into the panel and history.
+    private func streamNextAssistantTurn() {
         model.errorMessage = nil
         model.isStreaming = true
-
-        if !silent { panel.showNearCursor() }
+        let silent = Preferences.shared.silentMode
 
         streamTask = Task { [model] in
             do {
                 let provider = try Preferences.shared.makeProvider()
                 model.badge = provider.modelBadge
-                let content = try FileContentLoader.load(url: fileURL)
+
+                model.messages.append(DisplayMessage(role: .assistant, text: ""))
+                let index = model.messages.count - 1
+
                 var full = ""
-                for try await delta in provider.stream(content: content, action: action) {
+                for try await delta in provider.stream(system: systemPrompt, turns: history) {
                     if Task.isCancelled { return }
                     full += delta
-                    model.text = full
+                    model.messages[index].text = full
                 }
                 guard !full.isEmpty else { throw ProviderError.emptyResponse }
+                history.append(ChatTurn(role: .assistant, text: full))
                 model.isStreaming = false
-                if silent {
-                    // Silent mode: clipboard IS the output channel (PRD §6.3).
+
+                if silent, history.count <= 2 { // initial response only
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(full, forType: .string)
                     Self.notify(title: "Peek", body: "Result copied to clipboard.")
                 }
             } catch {
-                model.isStreaming = false
-                if silent {
-                    Self.notify(title: "Peek failed", body: error.localizedDescription)
-                } else {
-                    model.errorMessage = error.localizedDescription
+                // Drop the empty placeholder message if streaming never started.
+                if model.messages.last?.role == .assistant, model.messages.last?.text.isEmpty == true {
+                    model.messages.removeLast()
                 }
+                self.present(error: error)
             }
+        }
+    }
+
+    private func present(error: Error) {
+        model.isStreaming = false
+        if Preferences.shared.silentMode {
+            Self.notify(title: "Peek failed", body: error.localizedDescription)
+        } else {
+            model.errorMessage = error.localizedDescription
         }
     }
 
