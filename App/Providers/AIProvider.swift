@@ -38,14 +38,18 @@ struct PromptContent {
 }
 
 enum ProviderID: String, CaseIterable, Codable {
-    case anthropic, openai
+    case anthropic, openai, cli
 
     var displayName: String {
         switch self {
         case .anthropic: "Anthropic (Claude)"
         case .openai: "OpenAI"
+        case .cli: "Local command-line tool"
         }
     }
+
+    /// CLI provider needs a command, not an API key.
+    var needsAPIKey: Bool { self != .cli }
 }
 
 enum ProviderError: LocalizedError {

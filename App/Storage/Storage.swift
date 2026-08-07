@@ -63,8 +63,18 @@ struct Preferences {
         set { d.set(newValue?.absoluteString, forKey: "openAIBaseURL") }
     }
 
+    /// Absolute-path command line for the CLI provider (not a secret).
+    /// e.g. "/usr/local/bin/llm" or "$HOME/.local/bin/my-ai-wrapper.sh"
+    var cliCommand: String {
+        get { d.string(forKey: "cliCommand") ?? "" }
+        set { d.set(newValue, forKey: "cliCommand") }
+    }
+
     /// Build the active provider from preferences + Keychain.
     func makeProvider() throws -> AIProvider {
+        if provider == .cli {
+            return CLIProvider(command: cliCommand)
+        }
         guard let key = KeychainStore.apiKey(for: provider), !key.isEmpty else {
             throw ProviderError.missingAPIKey(provider)
         }
@@ -75,6 +85,8 @@ struct Preferences {
             var p = OpenAIProvider(apiKey: key)
             if let base = openAIBaseURL { p.baseURL = base }
             return p
+        case .cli:
+            fatalError("handled above")
         }
     }
 }

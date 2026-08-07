@@ -49,6 +49,7 @@ struct SettingsView: View {
     @State private var silentMode = Preferences.shared.silentMode
     @State private var apiKey = ""
     @State private var keySaved = false
+    @State private var cliCommand = Preferences.shared.cliCommand
 
     var body: some View {
         Form {
@@ -61,13 +62,22 @@ struct SettingsView: View {
                     apiKey = ""
                     keySaved = KeychainStore.apiKey(for: newValue) != nil
                 }
-                SecureField("API Key", text: $apiKey, prompt: Text(keySaved ? "•••••••• (saved)" : "Paste your API key"))
-                Button("Save Key") {
-                    KeychainStore.setAPIKey(apiKey, for: provider)
-                    apiKey = ""
-                    keySaved = true
+                if provider.needsAPIKey {
+                    SecureField("API Key", text: $apiKey, prompt: Text(keySaved ? "•••••••• (saved)" : "Paste your API key"))
+                    Button("Save Key") {
+                        KeychainStore.setAPIKey(apiKey, for: provider)
+                        apiKey = ""
+                        keySaved = true
+                    }
+                    .disabled(apiKey.isEmpty)
+                } else {
+                    TextField("Command", text: $cliCommand,
+                              prompt: Text("/absolute/path/to/tool [args…]"))
+                        .onChange(of: cliCommand) { _, v in Preferences.shared.cliCommand = v }
+                    Text("Reads the prompt on stdin, writes the response to stdout. Use an absolute path — GUI apps have a minimal PATH. Local tools can be slow to start (~5–10 s) and are text-only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(apiKey.isEmpty)
             }
             Section("Behavior") {
                 Picker("Default action", selection: $defaultAction) {
