@@ -1,0 +1,14 @@
+# Xcode / build
+build/
+DerivedData/
+*.xcodeproj
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Secrets — never commit keys or local config
+*.pem
+*.p12
+config.local.*
