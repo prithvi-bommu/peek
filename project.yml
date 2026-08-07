@@ -1,0 +1,52 @@
+name: Peek
+options:
+  bundleIdPrefix: dev.pbommu
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Uttr Dev Signing"
+    DEVELOPMENT_TEAM: ""
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    ENABLE_HARDENED_RUNTIME: false
+targets:
+  Peek:
+    type: application
+    platform: macOS
+    sources: [App]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Peek
+        LSUIElement: true
+        NSHumanReadableCopyright: "MIT License"
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.pbommu.peek
+            CFBundleURLSchemes: [peek]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.pbommu.peek
+    dependencies:
+      - target: PeekFinder
+        embed: true
+  PeekFinder:
+    type: app-extension
+    platform: macOS
+    sources: [FinderExt]
+    info:
+      path: FinderExt/Info.plist
+      properties:
+        CFBundleDisplayName: Peek Finder Extension
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.FinderSync
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FinderSync
+    entitlements:
+      path: FinderExt/PeekFinder.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-only: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.pbommu.peek.findersync
