@@ -6,6 +6,17 @@
 - `brew install xcodegen` (the `.xcodeproj` is generated, not committed)
 - A code-signing identity. Development uses the self-signed cert named in `project.yml` (`CODE_SIGN_IDENTITY`); create your own self-signed code-signing cert in Keychain Access and update that field if needed.
 
+## Setting up on a new machine (incl. macOS 26 / Tahoe)
+
+Self-signed certificates live in one Mac's keychain and **do not transfer**. On a fresh machine the build fails with "no identity found", and a Peek.app *copied* from another machine is killed on launch by Gatekeeper (stricter on macOS 26). Do this once per machine:
+
+1. Create a self-signed code-signing cert (Keychain Access → Certificate Assistant → Create a Certificate → name it exactly `Uttr Dev Signing`, type "Code Signing" — reusing the name means `project.yml` needs no edit), or pick your own name and update `CODE_SIGN_IDENTITY`.
+2. Build locally with `./scripts/install-local.sh` — never copy a built Peek.app between machines.
+3. If you did copy one and it dies instantly: `xattr -d com.apple.quarantine /Applications/Peek.app`, then right-click → Open. Prefer rebuilding.
+4. Re-enable the Finder extension in System Settings → Extensions (per-machine setting).
+
+macOS 26 (Tahoe) notes: builds linked against the macOS 26 SDK opt into stricter AppKit layout-reentrancy assertions — the panel's hosting view therefore has `sizingOptions = []` and `safeAreaRegions = []` (do not re-enable content-driven sizing). The Settings window uses `WindowFocus` to avoid opening behind other apps (cooperative-activation quirk of accessory apps).
+
 ## Build & install loop
 
 ```bash

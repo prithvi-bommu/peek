@@ -32,11 +32,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 struct MenuBarContent: View {
+    @Environment(\.openSettings) private var openSettings
+
     var body: some View {
         Text("Right-click a file in Finder → Peek")
         Divider()
-        SettingsLink { Text("Settings…") }
-            .keyboardShortcut(",")
+        // Not SettingsLink: accessory apps open Settings behind other windows
+        // without an explicit activate + order-front (see WindowFocus).
+        Button("Settings…") {
+            openSettings()
+            WindowFocus.focusSettingsWindow()
+        }
+        .keyboardShortcut(",")
         Divider()
         Button("Quit Peek") { NSApp.terminate(nil) }
             .keyboardShortcut("q")

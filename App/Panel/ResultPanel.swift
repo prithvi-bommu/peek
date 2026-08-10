@@ -53,6 +53,16 @@ final class ResultPanel: NSPanel {
         isOpaque = false
 
         let host = NSHostingView(rootView: ResultView(model: model))
+        // Fixed-size window, fixed-size content — the hosting view must never
+        // drive window sizing or participate in safe-area updates. On builds
+        // linked against the macOS 26 SDK, content-driven hosting-view sizing
+        // combined with safe-area invalidation on a panel forms a
+        // constraint-update cycle that AppKit's stricter layout-reentrancy
+        // assertion aborts with an uncaught NSGenericException (same failure
+        // fixed in uttr's recording indicator). The root SwiftUI view pins
+        // its own 440x380 frame, so nothing is lost by disabling these.
+        host.sizingOptions = []
+        host.safeAreaRegions = []
         contentView = host
     }
 
